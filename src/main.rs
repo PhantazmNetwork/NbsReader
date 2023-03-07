@@ -153,7 +153,7 @@ fn main() {
 
 fn normalize_tick(tempo: u16, tick: u16) -> u16 {
     let tempo_ticks = tempo as f32 / 100.0;
-    let res = tick as f32 * (tempo_ticks / 20.0);
+    let res = tick as f32 * (20.0 / tempo_ticks);
     return res.round() as u16;
 }
 
