@@ -1,51 +1,34 @@
-use std::env;
+use std::{env, mem};
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
-pub trait PrimitiveRead: Read {
-    fn read_u8(&mut self) -> u8 {
-        let mut bytes: [u8; 1] = [0; 1];
-        self.read_exact(&mut bytes).expect("Error reading u8");
-        return u8::from_le_bytes(bytes);
-    }
-
-    fn read_u16(&mut self) -> u16 {
-        let mut bytes: [u8; 2] = [0; 2];
-        self.read_exact(&mut bytes).expect("Error reading u16");
-        return u16::from_le_bytes(bytes);
-    }
-
-    fn read_i16(&mut self) -> i16 {
-        let mut bytes: [u8; 2] = [0; 2];
-        self.read_exact(&mut bytes).expect("Error reading i16");
-        return i16::from_le_bytes(bytes);
-    }
-
-    fn read_u32(&mut self) -> u32 {
-        let mut bytes: [u8; 4] = [0; 4];
-        self.read_exact(&mut bytes).expect("Error reading u32");
-        return u32::from_le_bytes(bytes);
-    }
-
-    fn read_utf8_string(&mut self) -> String {
-        let length = self.read_u32();
-        if length == 0 {
-            return "".to_string();
+#[macro_export]
+macro_rules! read_num {
+    ( $variable:ident,$number_type:ty ) => {
+        {
+            let mut bytes = [0; mem::size_of::<$number_type>()];
+            $variable.read_exact(&mut bytes).expect("Error reading bytes");
+            <$number_type>::from_le_bytes(bytes)
         }
-
-        let mut string_buffer = Vec::with_capacity(length as usize);
-        let mut itr = self.bytes();
-        for _ in 0..length {
-            string_buffer.push(itr.next().expect("Failed to read byte").unwrap());
-        }
-
-        return String::from_utf8(string_buffer).expect("Failed to read string");
     }
 }
 
-impl PrimitiveRead for BufReader<File> {}
+fn read_utf8_string(read: &mut BufReader<File>) -> String {
+    let length = read_num!(read, u32);
+    if length == 0 {
+        return "".to_string();
+    }
+
+    let mut string_buffer = Vec::with_capacity(length as usize);
+    let mut itr = read.bytes();
+    for _ in 0..length {
+        string_buffer.push(itr.next().expect("Error reading bytes").unwrap());
+    }
+
+    return String::from_utf8(string_buffer).expect("Failed to read string");
+}
 
 #[derive(Serialize, Deserialize)]
 struct Note {
@@ -132,12 +115,12 @@ fn main() {
     let mut reader = BufReader::new(File::open(&target_dir)
         .expect("Failed to open target file"));
 
-    let proto = reader.read_u16();
+    let proto = read_num!(reader, u16);
     if proto != 0 {
         panic!("Invalid file, or file was made using an unsupported version of NBS");
     }
 
-    let nbs_version = reader.read_u8();
+    let nbs_version = read_num!(reader, u8);
     let string = match nbs_version {
         5 => handle_version_5(reader),
         _ => panic!("File was made using an unsupported version of NBS")
@@ -158,38 +141,38 @@ fn normalize_tick(tempo: u16, tick: u16) -> u16 {
 }
 
 fn handle_version_5(mut buf: BufReader<File>) -> String {
-    let vanilla_instrument_count = buf.read_u8();
-    let song_length = buf.read_u16();
-    let layer_count = buf.read_u16();
+    let vanilla_instrument_count = read_num!(buf, u8);
+    let song_length = read_num!(buf, u16);
+    let layer_count = read_num!(buf, u16);
 
-    let song_name = buf.read_utf8_string();
-    let song_author = buf.read_utf8_string();
-    let song_original_author = buf.read_utf8_string();
-    let song_description = buf.read_utf8_string();
-    let song_tempo = buf.read_u16();
+    let song_name = read_utf8_string(&mut buf);
+    let song_author = read_utf8_string(&mut buf);
+    let song_original_author = read_utf8_string(&mut buf);
+    let song_description = read_utf8_string(&mut buf);
+    let song_tempo = read_num!(buf, u16);
 
-    let auto_saving = buf.read_u8();
-    let auto_saving_duration = buf.read_u8();
-    let time_signature = buf.read_u8();
+    let auto_saving = read_num!(buf, u8);
+    let auto_saving_duration = read_num!(buf, u8);
+    let time_signature = read_num!(buf, u8);
 
-    let minutes_spent = buf.read_u32();
-    let left_clicks = buf.read_u32();
-    let right_clicks = buf.read_u32();
-    let note_blocks_added = buf.read_u32();
-    let note_blocks_removed = buf.read_u32();
+    let minutes_spent = read_num!(buf, u32);
+    let left_clicks = read_num!(buf, u32);
+    let right_clicks = read_num!(buf, u32);
+    let note_blocks_added = read_num!(buf, u32);
+    let note_blocks_removed = read_num!(buf, u32);
 
-    let schematic_file_name = buf.read_utf8_string();
+    let schematic_file_name = read_utf8_string(&mut buf);
 
-    let loop_on = buf.read_u8();
-    let max_loop_count = buf.read_u8();
-    let loop_start_tick = buf.read_u16();
+    let loop_on = read_num!(buf, u8);
+    let max_loop_count = read_num!(buf, u8);
+    let loop_start_tick = read_num!(buf, u16);
 
     let mut notes = Vec::new();
 
     let mut actual_tick = u16::MAX;
     let mut last_actual_tick = 0;
     loop {
-        let jumps_to_next_tick = buf.read_u16();
+        let jumps_to_next_tick = read_num!(buf, u16);
         if jumps_to_next_tick == 0 {
             break;
         }
@@ -199,22 +182,26 @@ fn handle_version_5(mut buf: BufReader<File>) -> String {
         let mut actual_layer = u16::MAX;
         let mut first = true;
         loop {
-            let jumps_to_next_layer = buf.read_u16();
+            let jumps_to_next_layer = read_num!(buf, u16);
             if jumps_to_next_layer == 0 {
                 break
             }
 
             actual_layer = actual_layer.wrapping_add(jumps_to_next_layer);
 
-            let delay_tick: u16 = if first { normalize_tick(song_tempo, actual_tick - last_actual_tick) } else { 0 };
+            let delay_tick: u16 = match first {
+                true => normalize_tick(song_tempo, actual_tick - last_actual_tick),
+                false => 0
+            };
+
             notes.push(Note {
                 delay_ticks: delay_tick,
                 layer: actual_layer,
-                note_block_instrument: buf.read_u8(),
-                note_block_key: buf.read_u8(),
-                note_block_velocity: buf.read_u8(),
-                note_block_panning: buf.read_u8(),
-                note_block_pitch: buf.read_i16()
+                note_block_instrument: read_num!(buf, u8),
+                note_block_key: read_num!(buf, u8),
+                note_block_velocity: read_num!(buf, u8),
+                note_block_panning: read_num!(buf, u8),
+                note_block_pitch: read_num!(buf, i16)
             });
 
             first = false;
@@ -226,21 +213,21 @@ fn handle_version_5(mut buf: BufReader<File>) -> String {
     let mut layers = Vec::new();
     for _ in 0..layer_count {
         layers.push(Layer {
-            layer_name: buf.read_utf8_string(),
-            layer_lock: buf.read_u8(),
-            layer_volume: buf.read_u8(),
-            layer_stereo: buf.read_u8()
+            layer_name: read_utf8_string(&mut buf),
+            layer_lock: read_num!(buf, u8),
+            layer_volume: read_num!(buf, u8),
+            layer_stereo: read_num!(buf, u8)
         });
     }
 
-    let custom_instrument_count = buf.read_u8();
+    let custom_instrument_count = read_num!(buf, u8);
     let mut custom_instruments = Vec::with_capacity(custom_instrument_count as usize);
     for _ in 0..custom_instrument_count {
         custom_instruments.push(CustomInstrument {
-            instrument_name: buf.read_utf8_string(),
-            sound_file: buf.read_utf8_string(),
-            sound_pitch: buf.read_u8(),
-            press_key: buf.read_u8(),
+            instrument_name: read_utf8_string(&mut buf),
+            sound_file: read_utf8_string(&mut buf),
+            sound_pitch: read_num!(buf, u8),
+            press_key: read_num!(buf, u8)
         });
     }
 
